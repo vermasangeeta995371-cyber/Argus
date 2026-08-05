@@ -24,15 +24,19 @@ intents.guilds = True
 intents.members = True
 
 # Accept mentions, "c?", and "C?" as prefixes (removed "!")
+# Disable the built-in help command so the custom help cog can register its own.
 bot = commands.Bot(command_prefix=commands.when_mentioned_or("c?", "C?"),
                    intents=intents,
-                   description="Example Python discord.py bot")
+                   description="Example Python discord.py bot",
+                   help_command=None)
 
 logger = logging.getLogger("discord")
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("%(asctime)s:%(levelname)s:%(name)s: %(message)s"))
 logger.addHandler(handler)
+# Enable DEBUG logging for our debugging logger in cogs.afk so stack traces are visible.
+logging.getLogger("cogs.afk").setLevel(logging.DEBUG)
 
 @bot.event
 async def on_ready():
@@ -50,13 +54,13 @@ async def on_ready():
     except Exception as e:
         print("Failed to sync commands:", e)
 
-def load_cogs():
+async def load_cogs():
     cogs_dir = os.path.join(os.path.dirname(__file__), "cogs")
     for filename in os.listdir(cogs_dir):
         if filename.endswith(".py") and not filename.startswith("_"):
             ext = f"cogs.{filename[:-3]}"
             try:
-                bot.load_extension(ext)
+                await bot.load_extension(ext)
                 print(f"Loaded extension: {ext}")
             except Exception as e:
                 print(f"Failed to load extension {ext}: {e}")
@@ -78,7 +82,7 @@ async def main():
     # Initialize DB
     await db.init_db()
     # Load cogs
-    load_cogs()
+    await load_cogs()
     # Start healthcheck server
     runner = await start_healthcheck_server()
     try:

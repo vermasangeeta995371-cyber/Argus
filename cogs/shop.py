@@ -193,6 +193,112 @@ class Shop(commands.Cog):
 
         await ctx.send(f"✅ Purchased {quantity}x **{item_info['name']}** for {total:,} {CURRENCY}.")
 
+    # -----------------
+    # Admin: add/remove items
+    # -----------------
+    @shop.command(name="add")
+    @commands.has_permissions(manage_guild=True)
+    async def shop_add(self, ctx: commands.Context, name: str, price: int, *, description: Optional[str] = None):
+        """c?shop add <name> <price> [description] — add a consumable item to the shop (admin)"""
+        guild = ctx.guild
+        if guild is None:
+            await ctx.send("Server-only.")
+            return
+        try:
+            item_id = await db.create_item(guild.id, name=name, price=price, description=description or "", type_="consumable")
+            embed = discord.Embed(title="Shop Item Added", description=f"Added **{name}** (ID {item_id}) to the shop.", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
+            embed.add_field(name="Price", value=f"{price:,} {CURRENCY}", inline=True)
+            if description:
+                embed.add_field(name="Description", value=description, inline=False)
+            await ctx.send(embed=embed)
+            try:
+                await modlog_helper.send_modlog(self.bot, guild, "Shop Item Created", ctx.author, name, reason=None, extra=f"ID {item_id} • Price {price:,} {CURRENCY}")
+            except Exception:
+                pass
+        except Exception as e:
+            await ctx.send(f"Error creating item: {e}")
+
+    @shop.command(name="remove")
+    @commands.has_permissions(manage_guild=True)
+    async def shop_remove(self, ctx: commands.Context, identifier: str):
+        """c?shop remove <id|name> — remove an item from the shop (admin)"""
+        guild = ctx.guild
+        if guild is None:
+            await ctx.send("Server-only.")
+            return
+        try:
+            item = None
+            if identifier.isdigit():
+                item = await db.get_item(guild.id, int(identifier))
+            else:
+                item = await db.get_item_by_name(guild.id, identifier)
+            if not item:
+                await ctx.send("Item not found.")
+                return
+            removed = await db.delete_item(guild.id, item["id"]) if isinstance(item, dict) else await db.delete_item(guild.id, item.id)
+            # db.delete_item returns rowcount
+            await ctx.send(f"Removed item {item['name'] if isinstance(item, dict) else str(item)} (ID {item['id'] if isinstance(item, dict) else item.id}).")
+            try:
+                await modlog_helper.send_modlog(self.bot, guild, "Shop Item Removed", ctx.author, item['name'] if isinstance(item, dict) else str(item), reason=None, extra=f"ID {item['id'] if isinstance(item, dict) else item.id}")
+            except Exception:
+                pass
+        except Exception as e:
+            await ctx.send(f"Error removing item: {e}")
+
+    # Slash admin commands (typed, safer)
+    @discord.app_commands.command(name="shop_add", description="Add an item to the shop (admin)")
+    @discord.app_commands.checks.has_permissions(manage_guild=True)
+    async def shop_add_slash(self, interaction: discord.Interaction, name: str, price: int, description: Optional[str] = None, type_: Optional[str] = "consumable", role_id: Optional[int] = None, category: Optional[str] = None, cooldown_seconds: Optional[int] = 0, effect_type: Optional[str] = None, effect_value: Optional[str] = None):
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("This command works in servers only.", ephemeral=True)
+            return
+        try:
+            item_id = await db.create_item(
+                guild.id,
+                name=name,
+                price=price,
+                type_=type_ or "consumable",
+                description=description,
+                role_id=role_id,
+                category=category,
+                cooldown_seconds=int(cooldown_seconds or 0),
+                effect_type=effect_type,
+                effect_value=effect_value,
+            )
+            embed = discord.Embed(title="Shop Item Added", description=f"Added **{name}** (ID {item_id}) to the shop.", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
+            embed.add_field(name="Price", value=f"{price:,} {CURRENCY}", inline=True)
+            if description:
+                embed.add_field(name="Description", value=description, inline=False)
+            await interaction.response.send_message(embed=embed)
+            try:
+                await modlog_helper.send_modlog(self.bot, guild, "Shop Item Created", interaction.user, name, reason=None, extra=f"ID {item_id} • Price {price:,} {CURRENCY}")
+            except Exception:
+                pass
+        except Exception as e:
+            await interaction.response.send_message(f"Error creating item: {e}", ephemeral=True)
+
+    @discord.app_commands.command(name="shop_remove", description="Remove an item from the shop by id (admin)")
+    @discord.app_commands.checks.has_permissions(manage_guild=True)
+    async def shop_remove_slash(self, interaction: discord.Interaction, item_id: int):
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("This command works in servers only.", ephemeral=True)
+            return
+        try:
+            item = await db.get_item(guild.id, item_id)
+            if not item:
+                await interaction.response.send_message("Item not found.", ephemeral=True)
+                return
+            rows = await db.delete_item(guild.id, item_id)
+            await interaction.response.send_message(embed=discord.Embed(title="Shop Item Removed", description=f"Removed **{item['name']}** (ID {item_id})", color=discord.Color.orange(), timestamp=datetime.datetime.utcnow()))
+            try:
+                await modlog_helper.send_modlog(self.bot, guild, "Shop Item Removed", interaction.user, item['name'], reason=None, extra=f"ID {item_id}")
+            except Exception:
+                pass
+        except Exception as e:
+            await interaction.response.send_message(f"Error removing item: {e}", ephemeral=True)
+
     # inventory command
     @commands.command(name="inventory", aliases=["inv"])
     async def inventory(self, ctx: commands.Context):

@@ -76,6 +76,64 @@ async def init_db(path: Optional[str] = None):
             )
             """
         )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS afk (
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                reason TEXT,
+                since TEXT NOT NULL,
+                PRIMARY KEY (guild_id, user_id)
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS modlog_channels (
+                guild_id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS guild_locales (
+                guild_id INTEGER PRIMARY KEY,
+                locale TEXT NOT NULL DEFAULT 'en'
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS warnings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                reason TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS jackpot (
+                guild_id INTEGER PRIMARY KEY,
+                amount INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS game_cooldowns (
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                game TEXT NOT NULL,
+                last_used TEXT NOT NULL,
+                PRIMARY KEY (guild_id, user_id, game)
+            )
+            """
+        )
         await db.commit()
 
 
@@ -194,6 +252,19 @@ async def get_item(guild_id: int, item_id: int, path: Optional[str] = None) -> O
         cur = await db.execute(
             "SELECT id, name, description, price, type, role_id, category, cooldown_seconds, effect_type, effect_value FROM items WHERE guild_id = ? AND id = ?",
             (guild_id, item_id),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return {"id": row[0], "name": row[1], "description": row[2], "price": int(row[3]), "type": row[4], "role_id": row[5], "category": row[6], "cooldown_seconds": int(row[7] or 0), "effect_type": row[8], "effect_value": row[9]}
+
+
+async def get_item_by_name(guild_id: int, name: str, path: Optional[str] = None) -> Optional[Dict]:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute(
+            "SELECT id, name, description, price, type, role_id, category, cooldown_seconds, effect_type, effect_value FROM items WHERE guild_id = ? AND LOWER(name) = LOWER(?)",
+            (guild_id, name),
         )
         row = await cur.fetchone()
         if not row:
@@ -366,6 +437,27 @@ async def get_listings(guild_id: int, active_only: bool = True, path: Optional[s
         return [{"id": r[0], "seller_id": r[1], "item_id": r[2], "quantity": int(r[3]), "price_per_item": int(r[4]), "created_at": r[5]} for r in rows]
 
 
+async def get_listing(guild_id: int, listing_id: int, path: Optional[str] = None) -> Optional[Dict]:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute(
+            "SELECT id, seller_id, item_id, quantity, price_per_item, created_at, active FROM listings WHERE guild_id = ? AND id = ?",
+            (guild_id, listing_id),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "seller_id": row[1],
+            "item_id": row[2],
+            "quantity": int(row[3]),
+            "price_per_item": int(row[4]),
+            "created_at": row[5],
+            "active": int(row[6]),
+        }
+
+
 async def buy_listing(guild_id: int, buyer_id: int, listing_id: int, quantity: int, path: Optional[str] = None) -> Tuple[bool, str]:
     """
     Buy quantity of a listing. Atomic operation:
@@ -423,6 +515,196 @@ async def buy_listing(guild_id: int, buyer_id: int, listing_id: int, quantity: i
         except Exception as e:
             await db.execute("ROLLBACK")
             return False, f"DB error: {e}"
+
+
+# -------------------------
+# server / guild settings
+# -------------------------
+async def set_modlog_channel(guild_id: int, channel_id: int, path: Optional[str] = None):
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            "INSERT INTO modlog_channels (guild_id, channel_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET channel_id = excluded.channel_id",
+            (guild_id, channel_id),
+        )
+        await db.commit()
+
+
+async def get_modlog_channel(guild_id: int, path: Optional[str] = None) -> Optional[int]:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute("SELECT channel_id FROM modlog_channels WHERE guild_id = ?", (guild_id,))
+        row = await cur.fetchone()
+        return int(row[0]) if row else None
+
+
+async def clear_modlog_channel(guild_id: int, path: Optional[str] = None):
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        await db.execute("DELETE FROM modlog_channels WHERE guild_id = ?", (guild_id,))
+        await db.commit()
+
+
+async def get_guild_locale(guild_id: int, path: Optional[str] = None) -> str:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute("SELECT locale FROM guild_locales WHERE guild_id = ?", (guild_id,))
+        row = await cur.fetchone()
+        if row:
+            return row[0]
+        await db.execute("INSERT INTO guild_locales (guild_id, locale) VALUES (?, 'en')", (guild_id,))
+        await db.commit()
+        return "en"
+
+
+async def set_guild_locale(guild_id: int, locale: str, path: Optional[str] = None):
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            "INSERT INTO guild_locales (guild_id, locale) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET locale = excluded.locale",
+            (guild_id, locale),
+        )
+        await db.commit()
+
+
+async def add_warn(guild_id: int, user_id: int, moderator_id: int, reason: str, path: Optional[str] = None) -> int:
+    path = path or DB_PATH
+    now = datetime.datetime.utcnow().isoformat()
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute(
+            "INSERT INTO warnings (guild_id, user_id, moderator_id, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+            (guild_id, user_id, moderator_id, reason, now),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_warns(guild_id: int, user_id: int, path: Optional[str] = None) -> List[Dict]:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute(
+            "SELECT id, moderator_id, reason, created_at FROM warnings WHERE guild_id = ? AND user_id = ? ORDER BY id ASC",
+            (guild_id, user_id),
+        )
+        rows = await cur.fetchall()
+        return [{"id": r[0], "moderator_id": int(r[1]), "reason": r[2], "created_at": r[3]} for r in rows]
+
+
+async def remove_warn(guild_id: int, warn_id: int, path: Optional[str] = None) -> int:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute("DELETE FROM warnings WHERE guild_id = ? AND id = ?", (guild_id, warn_id))
+        await db.commit()
+        return cur.rowcount
+
+
+# -------------------------
+# afk / presence
+# -------------------------
+async def set_afk(guild_id: int, user_id: int, reason: str, path: Optional[str] = None):
+    path = path or DB_PATH
+    now = datetime.datetime.utcnow().isoformat()
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            "INSERT INTO afk (guild_id, user_id, reason, since) VALUES (?, ?, ?, ?) ON CONFLICT(guild_id, user_id) DO UPDATE SET reason = excluded.reason, since = excluded.since",
+            (guild_id, user_id, reason, now),
+        )
+        await db.commit()
+
+
+async def get_afk(guild_id: int, user_id: int, path: Optional[str] = None) -> Optional[Dict]:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute("SELECT reason, since FROM afk WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return {"reason": row[0], "since": row[1]}
+
+
+async def remove_afk(guild_id: int, user_id: int, path: Optional[str] = None) -> bool:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute("DELETE FROM afk WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+# -------------------------
+# jackpot / mini-games
+# -------------------------
+async def add_to_jackpot(guild_id: int, amount: int, path: Optional[str] = None) -> int:
+    if amount <= 0:
+        return 0
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        await db.execute("INSERT OR IGNORE INTO jackpot (guild_id, amount) VALUES (?, 0)", (guild_id,))
+        await db.execute("UPDATE jackpot SET amount = amount + ? WHERE guild_id = ?", (amount, guild_id))
+        await db.commit()
+        cur = await db.execute("SELECT amount FROM jackpot WHERE guild_id = ?", (guild_id,))
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+async def get_jackpot(guild_id: int, path: Optional[str] = None) -> int:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        await db.execute("INSERT OR IGNORE INTO jackpot (guild_id, amount) VALUES (?, 0)", (guild_id,))
+        cur = await db.execute("SELECT amount FROM jackpot WHERE guild_id = ?", (guild_id,))
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+async def claim_jackpot(guild_id: int, path: Optional[str] = None) -> int:
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        await db.execute("BEGIN")
+        cur = await db.execute("SELECT amount FROM jackpot WHERE guild_id = ?", (guild_id,))
+        row = await cur.fetchone()
+        amount = int(row[0]) if row else 0
+        await db.execute("INSERT OR IGNORE INTO jackpot (guild_id, amount) VALUES (?, 0)", (guild_id,))
+        await db.execute("UPDATE jackpot SET amount = 0 WHERE guild_id = ?", (guild_id,))
+        await db.commit()
+        return amount
+
+
+async def can_use_game(guild_id: int, user_id: int, game: str, cooldown: int, path: Optional[str] = None) -> Tuple[bool, Optional[int]]:
+    path = path or DB_PATH
+    now = datetime.datetime.utcnow()
+    async with aiosqlite.connect(path) as db:
+        cur = await db.execute("SELECT last_used FROM game_cooldowns WHERE guild_id = ? AND user_id = ? AND game = ?", (guild_id, user_id, game))
+        row = await cur.fetchone()
+        if not row:
+            return True, None
+        try:
+            last_used = datetime.datetime.fromisoformat(row[0])
+        except Exception:
+            return True, None
+        delta = (now - last_used).total_seconds()
+        if delta >= cooldown:
+            return True, None
+        return False, int(cooldown - delta)
+
+
+async def set_game_cooldown(guild_id: int, user_id: int, game: str, when: datetime.datetime, path: Optional[str] = None):
+    path = path or DB_PATH
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            "INSERT INTO game_cooldowns (guild_id, user_id, game, last_used) VALUES (?, ?, ?, ?) ON CONFLICT(guild_id, user_id, game) DO UPDATE SET last_used = excluded.last_used",
+            (guild_id, user_id, game, when.isoformat()),
+        )
+        await db.commit()
+
+
+async def set_inventory_last_used(guild_id: int, user_id: int, item_id: int, path: Optional[str] = None):
+    path = path or DB_PATH
+    now = datetime.datetime.utcnow().isoformat()
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            "UPDATE inventory SET last_used = ? WHERE guild_id = ? AND user_id = ? AND item_id = ?",
+            (now, guild_id, user_id, item_id),
+        )
+        await db.commit()
 
 
 async def cancel_listing(guild_id: int, seller_id: int, listing_id: int, path: Optional[str] = None) -> Tuple[bool, str]:

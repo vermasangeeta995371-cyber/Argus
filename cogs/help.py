@@ -181,7 +181,7 @@ class Help(commands.Cog):
         locale = await db.get_guild_locale(guild.id) if guild else "en"
         texts = _LOCALE_TEXT.get(locale, _LOCALE_TEXT["en"])
 
-        now = datetime.datetime.datetime.utcnow()
+        now = datetime.datetime.utcnow()
         pages: List[discord.Embed] = []
 
         # Collect slash commands per cog
@@ -273,7 +273,7 @@ class Help(commands.Cog):
         return None
 
     def _format_command_detail(self, found: Dict[str, Any], locale_text: Dict[str, str]) -> discord.Embed:
-        now = datetime.datetime.datetime.utcnow()
+        now = datetime.datetime.utcnow()
         typ = found["type"]
         cmd = found["command"]
         if typ == "prefix":
@@ -336,7 +336,7 @@ class Help(commands.Cog):
         await view.send_initial(ctx)
 
     # Jump helper: prefix command that opens help starting at a target page or category
-    @commands.command(name="help_goto", aliases=["help_goto", "helpgoto", "helpgoto"])
+    @commands.command(name="help_goto", aliases=["helpgoto", "gotohelp"])
     async def help_goto(self, ctx: commands.Context, *, query: str):
         """c?help goto <page|category> — open help starting at a page number or category name."""
         guild = ctx.guild

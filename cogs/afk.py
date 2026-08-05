@@ -8,6 +8,10 @@ import discord
 from discord.ext import commands
 import datetime
 import db  # local DB helper
+import logging
+import traceback
+
+_log = logging.getLogger("cogs.afk")
 
 class AFK(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -25,6 +29,13 @@ class AFK(commands.Cog):
     @commands.command(name="back")
     async def back(self, ctx: commands.Context):
         """c?back — remove your AFK manually"""
+        # Debugging: log invocation and stack to help trace duplicate calls
+        try:
+            _log.info("AFK.back invoked by %s#%s (%s)", ctx.author.name, ctx.author.discriminator, ctx.author.id)
+            stack = "".join(traceback.format_stack()[:-1])
+            _log.debug("Call stack for AFK.back:\n%s", stack)
+        except Exception:
+            pass
         if ctx.guild is None:
             await ctx.send("This command works only in servers.")
             return
@@ -39,6 +50,24 @@ class AFK(commands.Cog):
         # Ignore bot messages
         if message.author.bot:
             return
+
+        # If the message is a command invocation, skip the AFK auto-remove/notify
+        # to avoid duplicate responses (the command itself handles removal).
+        try:
+            # Fast path: check common prefix and bot mention to avoid waiting on parsing
+            content = (message.content or "").lstrip()
+            if content.startswith("c?") or content.startswith("C?"):
+                return
+            # Also check explicit bot mention prefixes
+            if self.bot.user:
+                if content.startswith(f"<@{self.bot.user.id}>") or content.startswith(f"<@!{self.bot.user.id}>"):
+                    return
+            # Fallback: use get_context to detect commands not covered above
+            ctx = await self.bot.get_context(message)
+            if ctx and ctx.command:
+                return
+        except Exception:
+            pass
 
         # If author was AFK, remove and notify
         if message.guild:
@@ -86,8 +115,10 @@ class AFK(commands.Cog):
                         except Exception:
                             pass
 
-        # Make sure other commands still run
-        await self.bot.process_commands(message)
+        # No explicit call to `process_commands` here — the Bot's own
+        # on_message handler will run and dispatch commands. Calling
+        # `process_commands` here caused commands to be executed twice.
+        return
 
 
 async def setup(bot: commands.Bot):
