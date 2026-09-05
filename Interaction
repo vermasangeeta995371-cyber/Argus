@@ -1,0 +1,55 @@
+import discord
+from discord.ext import commands
+import random
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(
+    command_prefix=["c?", "C?"],
+    intents=intents
+)
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+
+# Hug command
+@bot.command()
+async def hug(ctx, member: discord.Member = None):
+    if member is None:
+        member = ctx.author
+
+    messages = [
+        f"🤗 {ctx.author.mention} gave {member.mention} a big hug!",
+        f"🫂 {ctx.author.mention} hugged {member.mention}!",
+        f"💖 {ctx.author.mention} warmly hugged {member.mention}!"
+    ]
+
+    await ctx.send(random.choice(messages))
+
+
+# Kiss command
+@bot.command()
+async def kiss(ctx, member: discord.Member = None):
+    if member is None:
+        member = ctx.author
+
+    await ctx.send(
+        f"😘 {ctx.author.mention} kissed {member.mention}!"
+    )
+
+
+# Slap command
+@bot.command()
+async def slap(ctx, member: discord.Member = None):
+    if member is None:
+        await ctx.send(f"👋 {ctx.author.mention} slapped themselves 😂")
+        return
+
+    await ctx.send(
+        f"👋 {ctx.author.mention} slapped {member.mention}!"
+    )
+
+
+bot.run("YOUR_BOT_TOKEN")
