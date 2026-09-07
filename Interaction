@@ -56,4 +56,4 @@ async def slap(ctx, member: discord.Member = None):
     )
 
 
-bot.run(os.getenv(""))
+bot.run(os.getenv("DISCORD_TOKEN"))
